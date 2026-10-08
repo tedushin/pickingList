@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>発注データ ピッキングリスト作成</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.0/dist/JsBarcode.all.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        /* 印刷設定 */
+        @page {
+            size: A4 portrait;
+            margin: 10mm;
+        }
+
+        @media print {
+            body {
+                background-color: white;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .print-container {
+                box-shadow: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
+            }
+            .preview-page {
+                box-shadow: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 190mm !important;
+                min-height: 0 !important;
+                overflow: visible;
+                position: static !important;
+            }
+            .page-break {
+                display: block !important;
+                height: 0;
+                page-break-after: always;
+                break-after: page;
+            }
+            .page-footer {
+                position: static !important;
+                right: auto !important;
+                bottom: auto !important;
+                margin-top: 4mm !important;
+                text-align: right;
+            }
+            table {
+                width: 100% !important;
+                border-collapse: collapse;
+                table-layout: fixed;
+            }
+            th, td {
+                border: 1px solid #000 !important;
+                font-size: 10pt !important;
+                padding: 4px !important;
+            }
+            th {
+                background-color: #f0f0f0 !important;
+            }
+            .compact-cell {
+                font-size: 8pt !important;
+                padding-left: 2px !important;
+                padding-right: 2px !important;
+            }
+            .store-name-cell {
+                font-size: 7pt !important;
+            }
+            .product-name {
+                font-size: 11pt !important;
+            }
+            .barcode-cell {
+                padding: 2px !important;
+            }
+            /* 印刷時のグレー網掛け強制 */
+            .force-gray-bg {
+                background-color: #e5e7eb !important; /* bg-gray-200 */
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+
+        /* 画面表示用 */
+        .preview-page {
+            background: white;
+            width: 210mm;
+            min-height: 297mm;
+            margin: 2rem auto;
+            padding: 10mm;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        .page-footer {
+            position: absolute;
+            bottom: 5mm;
+            right: 10mm;
+            font-size: 9pt;
+            color: #555;
+        }
+
+        .page-break {
+            display: none;
+        }
+
+        .picking-table {
+            table-layout: fixed;
+        }
+
+        .picking-table tbody tr {
+            height: 14.4mm;
+        }
+
+        .picking-table tbody td {
+            vertical-align: middle;
+        }
+
+        .store-name-cell {
+            font-size: 9px;
+            letter-spacing: -0.04em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .barcode {
+            display: block;
+            margin: 0 auto;
+            max-width: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen text-gray-800">
+
+    <!-- コントロールパネル (印刷時は非表示) -->
+    <div class="no-print bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+            <h1 class="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                ピッキングリスト作成
+            </h1>
+            <div class="flex gap-4">
+                <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg transition file-input-wrapper flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    <span>CSVを選択...</span>
+                    <input type="file" id="csvInput" accept=".csv" class="hidden">
+                </label>
+                <button onclick="handlePrint()" id="printBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium shadow-lg shadow-indigo-200 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                    印刷 / PDF保存
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dateWarningModal" class="no-print fixed inset-0 z-[100] hidden items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="dateWarningTitle" aria-describedby="dateWarningDetails">
+        <div class="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-2xl">
+            <p class="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-amber-600">印刷前の確認</p>
+            <h2 id="dateWarningTitle" class="text-xl font-extrabold leading-relaxed text-slate-900">今日の日付と発注日がズレていますOKですか？</h2>
+            <p id="dateWarningDetails" class="mt-3 rounded-lg bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900"></p>
+            <div class="mt-6 flex justify-end gap-3">
+                <button type="button" onclick="closeDateWarning()" id="dateWarningNo" class="rounded-lg border border-slate-300 px-5 py-2.5 font-bold text-slate-700 transition hover:bg-slate-100">No</button>
+                <button type="button" onclick="confirmPrint()" class="rounded-lg bg-amber-500 px-5 py-2.5 font-bold text-white shadow-lg shadow-amber-200 transition hover:bg-amber-600">Yes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- コンテンツエリア -->
+    <div id="previewArea" class="print-container">
+        <div class="no-print flex flex-col items-center justify-center p-20 text-gray-400">
+            <svg class="w-16 h-16 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+            <p class="text-lg">CSVファイルをアップロードしてください</p>
+            <p class="text-sm mt-2">指定された形式（Shift JS）のファイルを処理します</p>
+        </div>
+    </div>
+
+    <!-- テンプレート -->
+    <template id="tableHeaderTemplate">
+        <thead>
+            <tr class="bg-gray-100 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 border-b-2 border-gray-300">
+                <th class="p-1 border text-center">No.</th>
+                <th class="p-1 border">JANコード</th>
+                <th class="p-1 border">店舗名</th>
+                <th class="p-1 border">発注日</th>
+                <th class="p-1 border">小分類</th>
+                <th class="p-1 border">商品名</th>
+                <th class="p-1 border text-right">数量</th>
+            </tr>
+        </thead>
+    </template>
+
+    <script>
+        let loadedOrderDates = [];
+
+        function normalizeOrderDate(value) {
+            const digits = String(value || '').replace(/\D/g, '');
+            return digits.length === 8 ? digits : '';
+        }
+
+        function getTodayValue() {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            return `${year}${month}${day}`;
+        }
+
+        function formatDateValue(value) {
+            if (!value) return '未設定';
+            return `${value.slice(0, 4)}/${value.slice(4, 6)}/${value.slice(6, 8)}`;
+        }
+
+        function handlePrint() {
+            const today = getTodayValue();
+            const hasDateMismatch = loadedOrderDates.length !== 1 || loadedOrderDates[0] !== today;
+
+            if (!hasDateMismatch) {
+                window.print();
+                return;
+            }
+
+            const orderDateText = loadedOrderDates.length > 0
+                ? loadedOrderDates.map(formatDateValue).join(', ')
+                : '未設定';
+            document.getElementById('dateWarningDetails').textContent =
+                `今日: ${formatDateValue(today)} ／ 発注日: ${orderDateText}`;
+
+            const modal = document.getElementById('dateWarningModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            document.getElementById('dateWarningNo').focus();
+        }
+
+        function closeDateWarning() {
+            const modal = document.getElementById('dateWarningModal');
+            modal.classList.remove('flex');
+            modal.classList.add('hidden');
+        }
+
+        function confirmPrint() {
+            closeDateWarning();
+            window.print();
+        }
+
+        document.addEventListener('keydown', event => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'p') {
+                event.preventDefault();
+                handlePrint();
+                return;
+            }
+            if (event.key === 'Escape') closeDateWarning();
+        });
+
+        document.getElementById('csvInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.readAsText(file, 'Shift_JIS');
+            
+            reader.onload = function(event) {
+                const csvData = event.target.result;
+                processData(csvData);
+                document.getElementById('printBtn').disabled = false;
+            };
+        });
+
+        function processData(csvText) {
+            Papa.parse(csvText, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    const data = results.data;
+                    if (data.length === 0) return;
+                    renderPreview(data);
+                }
+            });
+        }
+
+        function renderPreview(data) {
+            const previewArea = document.getElementById('previewArea');
+            previewArea.innerHTML = '';
+
+            // 1. データ加工
+            let processed = data.map(row => {
+                return {
+                    storeName: row['店舗名'],
+                    orderDate: row['発注日'],
+                    smallCat: parseFloat(row['小分類＃']) || 0,
+                    jan: row['ＪＡＮ＃'] ? row['ＪＡＮ＃'].trim() : '', // バーコード用に文字列で保持
+                    janNum: parseFloat(row['ＪＡＮ＃']) || 0,        // ソート用に数値化
+                    productName: row['商品名'] || '',
+                    quantity: row['数量']
+                };
+            });
+
+            // 店舗名を取得（データが存在する場合、最初の行から取得）
+            const storeName = processed.length > 0 ? processed[0].storeName : '';
+
+            // 2. ソート処理
+            processed.sort((a, b) => {
+                if (a.smallCat !== b.smallCat) {
+                    return a.smallCat - b.smallCat;
+                }
+                return a.janNum - b.janNum;
+            });
+
+            // 小分類順に並んだ全商品へ通し番号を付与
+            processed.forEach((item, index) => {
+                item.sequence = index + 1;
+            });
+
+            loadedOrderDates = [...new Set(
+                processed.map(item => normalizeOrderDate(item.orderDate))
+            )];
+
+            // 3. データの分割
+            const group1 = [];
+            const group2 = [];
+            const group3 = [];
+
+            processed.forEach(item => {
+                if (item.smallCat <= 1019) {
+                    group1.push(item);
+                } else if (item.smallCat < 4000) {
+                    group2.push(item);
+                } else {
+                    group3.push(item);
+                }
+            });
+
+            // 4. テーブル作成ヘルパー
+            const createTable = (rows) => {
+                const table = document.createElement('table');
+                table.className = "picking-table w-full text-sm text-left text-gray-500 border-collapse border border-gray-400";
+
+                const colgroup = document.createElement('colgroup');
+                [7, 48, 16, 19, 13, 77, 10].forEach(width => {
+                    const col = document.createElement('col');
+                    col.style.width = `${width}mm`;
+                    colgroup.appendChild(col);
+                });
+                table.appendChild(colgroup);
+                
+                const thead = document.getElementById('tableHeaderTemplate').content.cloneNode(true);
+                table.appendChild(thead);
+
+                const tbody = document.createElement('tbody');
+                rows.forEach(row => {
+                    const tr = document.createElement('tr');
+                    
+                    // ベースは白（縞模様なし）
+                    let trClass = "bg-white";
+
+                    // 商品名に "1800" が含まれる場合のハイライト処理
+                    if (row.productName && row.productName.includes('1800')) {
+                        trClass = "bg-gray-200 force-gray-bg";
+                    }
+
+                    tr.className = trClass;
+
+                    // 商品名の長さに応じてフォントサイズを調整し、必ず1行に収める
+                    let nameStyleClass = "product-name font-semibold text-gray-900 whitespace-nowrap text-sm";
+                    const len = row.productName ? row.productName.length : 0;
+                    
+                    if (len > 30) {
+                        nameStyleClass += " text-[9px] tracking-tighter";
+                    } else if (len > 22) {
+                        nameStyleClass += " text-[10px] tracking-tight";
+                    } else if (len > 16) {
+                        nameStyleClass += " text-xs";
+                    }
+
+                    tr.innerHTML = `
+                        <td class="sequence-cell p-1 border border-gray-300 text-center font-bold text-gray-900">${row.sequence}</td>
+                        <td class="barcode-cell p-1 border border-gray-300 text-center">
+                            <canvas class="barcode"
+                                jsbarcode-format="EAN13"
+                                jsbarcode-value="${row.jan}"
+                                jsbarcode-textmargin="0"
+                                jsbarcode-margin="0"
+                                jsbarcode-fontoptions="bold"
+                                jsbarcode-height="25"
+                                jsbarcode-width="2"
+                                jsbarcode-displayValue="true"
+                                jsbarcode-fontSize="11">
+                            </canvas>
+                        </td>
+                        <td class="store-name-cell compact-cell p-1 border border-gray-300 text-gray-900 whitespace-nowrap">${row.storeName || ''}</td>
+                        <td class="compact-cell p-1 border border-gray-300 text-[10px] whitespace-nowrap">${row.orderDate || ''}</td>
+                        <td class="compact-cell p-1 border border-gray-300 font-mono text-[10px]">${row.smallCat}</td>
+                        <td class="p-1 border border-gray-300 ${nameStyleClass} max-w-[300px] overflow-hidden text-ellipsis">${row.productName}</td>
+                        <td class="p-1 border border-gray-300 text-right font-bold text-gray-900 text-sm">${row.quantity || ''}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                return table;
+            };
+
+            const createPage = (contentElements) => {
+                const page = document.createElement('div');
+                page.className = 'preview-page';
+                contentElements.forEach(el => page.appendChild(el));
+                return page;
+            };
+
+            // ページネーション設定
+            const ITEMS_PER_PAGE = 17;
+
+            // グループ描画関数
+            const renderGroup = (rows, titleText) => {
+                if (rows.length === 0) return;
+
+                const pageCount = Math.ceil(rows.length / ITEMS_PER_PAGE);
+                
+                for (let i = 0; i < pageCount; i++) {
+                    const start = i * ITEMS_PER_PAGE;
+                    const end = start + ITEMS_PER_PAGE;
+                    const chunk = rows.slice(start, end);
+                    
+                    const title = document.createElement('h2');
+                    title.textContent = titleText;
+                    title.className = "text-xl font-bold mb-4";
+                    
+                    const table = createTable(chunk);
+                    previewArea.appendChild(createPage([title, table]));
+                }
+            };
+
+            // 描画実行
+            const groupsInfo = [
+                { data: group1, title: `${storeName}ピッキングリスト (小分類 ～1019)` },
+                { data: group2, title: `${storeName}ピッキングリスト (小分類 1020～3999)` },
+                { data: group3, title: `${storeName}ピッキングリスト (小分類 4000～)` }
+            ].filter(g => g.data.length > 0);
+
+            groupsInfo.forEach(g => {
+                renderGroup(g.data, g.title);
+            });
+
+            // ページ番号の付与
+            const pageElements = previewArea.querySelectorAll('.preview-page');
+            const totalPages = pageElements.length;
+            pageElements.forEach((pageEl, index) => {
+                const footer = document.createElement('div');
+                footer.className = 'page-footer';
+                footer.textContent = `${index + 1} / ${totalPages}`;
+                pageEl.appendChild(footer);
+
+                if (index < totalPages - 1) {
+                    const breakEl = document.createElement('div');
+                    breakEl.className = 'page-break';
+                    pageEl.after(breakEl);
+                }
+            });
+
+            // バーコード生成実行
+            JsBarcode(".barcode").init();
+
+            // JANコード欄の横幅いっぱいにバーコードを表示
+            previewArea.querySelectorAll('.barcode').forEach(barcode => {
+                barcode.style.width = '100%';
+            });
+        }
+    </script>
+</body>
+</html>
